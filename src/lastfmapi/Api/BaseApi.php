@@ -3,12 +3,11 @@
 namespace LastFmApi\Api;
 
 use LastFmApi\Exception\ApiFailedException;
-use LastFmApi\Exception\CacheException;
 use LastFmApi\Exception\ConnectionException;
 use LastFmApi\Exception\InvalidArgumentException;
 use LastFmApi\Lib\Socket;
-use LastFmApi\Lib\Cache;
 use LastFmApi\Lib\ApiUtils;
+use Psr\SimpleCache\CacheInterface;
 use \SimpleXMLElement;
 
 /**
@@ -59,12 +58,12 @@ class BaseApi
      * @var class
      */
     private $socket;
-    /*
-     * Stores the cache class
-     * @access private
-     * @var class
+
+    /**
+     * @var CacheInterface $cache
      */
     private $cache;
+
     /*
      * Stores the config
      * @access private
@@ -84,7 +83,7 @@ class BaseApi
      */
     protected $fullAuth;
 
-    public function __construct($auth, $config = array())
+    public function __construct($auth, $config = array(), CacheInterface $cache = null)
     {
         $this->config = $config;
         if (empty($this->config)) {
@@ -92,6 +91,8 @@ class BaseApi
                 'enabled' => false
             );
         }
+
+        $this->cache = $cache;
 
         if (is_object($auth)) {
             if (!empty($auth->apiKey) && !empty($auth->apiSecret) && !empty($auth->username) && !empty($auth->sessionKey) && ($auth->subscriber == 0 || $auth->subscriber == 1)) {
@@ -105,6 +106,11 @@ class BaseApi
         } else {
             throw new InvalidArgumentException('You need to pass a lastfmApiAuth class as the first variable to this class');
         }
+    }
+
+    public function setCache(CacheInterface $cache)
+    {
+        $this->cache = $cache;
     }
 
     /**
@@ -160,7 +166,6 @@ class BaseApi
      * @access private
      * @return object
      */
-
     private function processResponse()
     {
         $xmlstr = '';
@@ -192,6 +197,24 @@ class BaseApi
         }
     }
 
+    private function readCache($cacheKey)
+    {
+        if (is_null($this->cache)) {
+            return false;
+        }
+
+        return $this->cache->get($cacheKey);
+    }
+
+    private function writeCache($cacheKey, $response)
+    {
+        if (is_null($this->cache)) {
+            return;
+        }
+
+        $this->cache->set($cacheKey, $response);
+    }
+
     /*
      * Used in api calls that do not require write access. Returns an xml object
      * @access protected
@@ -200,34 +223,31 @@ class BaseApi
 
     protected function apiGetCall($vars)
     {
-        $this->cache = new Cache($this->config);
-        if (!empty($this->cache->error)) {
-            throw new CacheException($this->cache->error);
-        } else {
-            if ($cache = $this->cache->get($vars)) {
-                // Cache exists
-                $this->response = $cache;
-                return $this->processResponse();
-            } else {
-                // Cache doesnt exist
-                $this->setup();
-                if ($this->connected == 1) {
-                    $url = '/2.0/?';
-                    foreach ($vars as $name => $value) {
-                        $url .= trim(urlencode($name)) . '=' . trim(urlencode($value)) . '&';
-                    }
-                    $url = substr($url, 0, -1);
-                    $url = str_replace(' ', '%20', $url);
+        $cacheKey = htmlentities(serialize($vars));
 
-                    $out = "GET " . $url . " HTTP/1.0\r\n";
-                    $out .= "Host: " . $this->host . "\r\n";
-                    $out .= "\r\n";
-                    $this->response = $this->socket->send($out, 'array');
-                    $processedResponse = $this->processResponse();
-                    $this->cache->set($vars, $this->response);
-                    
-                    return $processedResponse;
+        if ($cachedResponse = $this->readCache($cacheKey)) {
+            // Cache exists
+            $this->response = $cachedResponse;
+            return $this->processResponse();
+        } else {
+            // Cache doesnt exist
+            $this->setup();
+            if ($this->connected == 1) {
+                $url = '/2.0/?';
+                foreach ($vars as $name => $value) {
+                    $url .= trim(urlencode($name)) . '=' . trim(urlencode($value)) . '&';
                 }
+                $url = substr($url, 0, -1);
+                $url = str_replace(' ', '%20', $url);
+
+                $out = "GET " . $url . " HTTP/1.0\r\n";
+                $out .= "Host: " . $this->host . "\r\n";
+                $out .= "\r\n";
+                $this->response = $this->socket->send($out, 'array');
+                $processedResponse = $this->processResponse();
+                $this->writeCache($cacheKey, $this->response);
+
+                return $processedResponse;
             }
         }
     }
