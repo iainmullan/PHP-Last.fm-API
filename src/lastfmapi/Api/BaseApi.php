@@ -212,7 +212,7 @@ class BaseApi
             return;
         }
 
-        $this->cache->set($cacheKey, $response);
+        $this->cache->set($cacheKey, $response, $this->config['cache_length'] ?: null);
     }
 
     /*
