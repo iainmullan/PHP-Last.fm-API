@@ -223,7 +223,7 @@ class BaseApi
 
     protected function apiGetCall($vars)
     {
-        $cacheKey = htmlentities(serialize($vars));
+        $cacheKey = md5(htmlentities(serialize($vars)));
 
         if ($cachedResponse = $this->readCache($cacheKey)) {
             // Cache exists
